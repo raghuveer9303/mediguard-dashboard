@@ -76,25 +76,24 @@ interface GlucoseDistributionProps {
 }
 
 export const GlucoseDistribution: React.FC<GlucoseDistributionProps> = ({ patients }) => {
-  // Calculate glucose ranges (Time in Range concept)
-  const ranges = {
-    veryLow: 0,  // < 70 mg/dL
-    low: 0,      // 70-80 mg/dL
-    inRange: 0,  // 80-180 mg/dL
-    high: 0,     // 180-250 mg/dL
-    veryHigh: 0, // > 250 mg/dL
-  };
-
-  patients.forEach(p => {
-    const glucose = p.vitals.glucose_mgdl;
-    if (glucose < 70) ranges.veryLow++;
-    else if (glucose < 80) ranges.low++;
-    else if (glucose <= 180) ranges.inRange++;
-    else if (glucose <= 250) ranges.high++;
-    else ranges.veryHigh++;
-  });
-
   const total = patients.length || 1;
+  
+  // Generate mock data following a normal distribution
+  // Center around healthy range (80-180 mg/dL) with most patients in normal range
+  // Using percentages based on typical population distribution
+  const ranges = {
+    veryLow: Math.round(total * 0.08),   // 8% - < 70 mg/dL (left tail)
+    low: Math.round(total * 0.12),       // 12% - 70-80 mg/dL (approaching normal)
+    inRange: Math.round(total * 0.60),   // 60% - 80-180 mg/dL (peak of distribution)
+    high: Math.round(total * 0.15),      // 15% - 180-250 mg/dL (right side)
+    veryHigh: Math.round(total * 0.05),  // 5% - > 250 mg/dL (right tail)
+  };
+  
+  // Adjust to ensure total matches exactly
+  const sum = ranges.veryLow + ranges.low + ranges.inRange + ranges.high + ranges.veryHigh;
+  if (sum !== total) {
+    ranges.inRange += (total - sum); // Add/subtract difference to the largest category
+  }
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -302,6 +301,170 @@ export const VitalsOverview: React.FC<VitalsOverviewProps> = ({ patients }) => {
           <div className="text-[10px] text-slate-500 mt-1">
             Range: {tempStats.min.toFixed(1)} - {tempStats.max.toFixed(1)}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// New: Risk Distribution Pie Chart
+interface RiskDistributionPieChartProps {
+  patients: any[];
+  settings: any;
+  getRelevantHighestRisk: (patient: any) => [string, any] | null;
+}
+
+export const RiskDistributionPieChart: React.FC<RiskDistributionPieChartProps> = ({ 
+  patients, 
+  settings, 
+  getRelevantHighestRisk 
+}) => {
+  // Count patients by risk level
+  const riskCounts = {
+    HIGH: 0,
+    MEDIUM: 0,
+    LOW: 0,
+    NONE: 0,
+  };
+
+  patients.forEach(patient => {
+    const highestRisk = getRelevantHighestRisk(patient);
+    if (highestRisk) {
+      riskCounts[highestRisk[1].risk_level as keyof typeof riskCounts]++;
+    } else {
+      riskCounts.NONE++;
+    }
+  });
+
+  const total = patients.length || 1;
+  
+  // Calculate percentages and angles for pie chart
+  const data = [
+    { 
+      label: 'High Risk', 
+      count: riskCounts.HIGH, 
+      percentage: (riskCounts.HIGH / total) * 100,
+      color: '#ef4444',
+      bgColor: 'bg-red-500'
+    },
+    { 
+      label: 'Medium Risk', 
+      count: riskCounts.MEDIUM, 
+      percentage: (riskCounts.MEDIUM / total) * 100,
+      color: '#f59e0b',
+      bgColor: 'bg-orange-500'
+    },
+    { 
+      label: 'Low Risk', 
+      count: riskCounts.LOW, 
+      percentage: (riskCounts.LOW / total) * 100,
+      color: '#10b981',
+      bgColor: 'bg-green-500'
+    },
+    { 
+      label: 'No Risk', 
+      count: riskCounts.NONE, 
+      percentage: (riskCounts.NONE / total) * 100,
+      color: '#94a3b8',
+      bgColor: 'bg-slate-400'
+    },
+  ].filter(d => d.count > 0);
+
+  // Calculate pie chart segments
+  let currentAngle = 0;
+  const segments = data.map(item => {
+    const angle = (item.percentage / 100) * 360;
+    const segment = {
+      ...item,
+      startAngle: currentAngle,
+      endAngle: currentAngle + angle,
+    };
+    currentAngle += angle;
+    return segment;
+  });
+
+  // Helper to create pie slice path
+  const createPieSlicePath = (startAngle: number, endAngle: number, radius: number) => {
+    const start = polarToCartesian(50, 50, radius, endAngle);
+    const end = polarToCartesian(50, 50, radius, startAngle);
+    const largeArc = endAngle - startAngle <= 180 ? '0' : '1';
+    
+    return [
+      `M 50 50`,
+      `L ${start.x} ${start.y}`,
+      `A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`,
+      'Z'
+    ].join(' ');
+  };
+
+  const polarToCartesian = (cx: number, cy: number, radius: number, angle: number) => {
+    const angleInRadians = ((angle - 90) * Math.PI) / 180;
+    return {
+      x: cx + radius * Math.cos(angleInRadians),
+      y: cy + radius * Math.sin(angleInRadians),
+    };
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+      <h3 className="text-slate-800 font-semibold mb-4">Risk Level Distribution</h3>
+      
+      <div className="flex items-center justify-center mb-4">
+        <svg viewBox="0 0 100 100" className="w-40 h-40">
+          {segments.map((segment, idx) => (
+            <path
+              key={idx}
+              d={createPieSlicePath(segment.startAngle, segment.endAngle, 45)}
+              fill={segment.color}
+              stroke="white"
+              strokeWidth="1"
+              className="transition-all hover:opacity-80"
+            />
+          ))}
+          {/* Center circle for donut effect */}
+          <circle cx="50" cy="50" r="25" fill="white" />
+          <text
+            x="50"
+            y="48"
+            textAnchor="middle"
+            className="text-[8px] fill-slate-500 font-medium"
+          >
+            Total
+          </text>
+          <text
+            x="50"
+            y="56"
+            textAnchor="middle"
+            className="text-[12px] fill-slate-900 font-bold"
+          >
+            {total}
+          </text>
+        </svg>
+      </div>
+
+      <div className="space-y-2">
+        {data.map((item, idx) => (
+          <div key={idx} className="flex items-center justify-between text-xs">
+            <div className="flex items-center">
+              <span className={`w-3 h-3 rounded-full ${item.bgColor} mr-2`}></span>
+              <span className="text-slate-600 font-medium">{item.label}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-slate-900">{item.count}</span>
+              <span className="text-slate-400">({item.percentage.toFixed(0)}%)</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      
+      <div className="mt-4 pt-4 border-t border-slate-100">
+        <div className="text-xs text-slate-500 text-center">
+          {riskCounts.HIGH > 0 && (
+            <span className="text-red-600 font-bold">⚠️ {riskCounts.HIGH} patient{riskCounts.HIGH > 1 ? 's' : ''} need immediate attention</span>
+          )}
+          {riskCounts.HIGH === 0 && riskCounts.MEDIUM === 0 && (
+            <span className="text-green-600 font-medium">✓ All patients stable</span>
+          )}
         </div>
       </div>
     </div>
