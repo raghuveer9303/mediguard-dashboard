@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, AlertTriangle, Activity, Heart, ArrowRight, Search, Filter, X, Bell } from 'lucide-react';
+import { Users, AlertTriangle, Activity, Heart, ArrowRight, Search, Filter, X, Bell, TrendingUp, Droplets, Zap } from 'lucide-react';
 import { PatientRecord, DashboardStats, PredictionDetail, AppSettings } from '../types';
-import { SummaryCard, RiskBadge } from '../components/DashboardWidgets';
+import { SummaryCard, RiskBadge, GlucoseDistribution, RiskMatrix, VitalsOverview } from '../components/DashboardWidgets';
 
 interface DashboardProps {
   patients: PatientRecord[];
@@ -100,6 +100,16 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
       });
   }, [patients, dismissedAlerts, settings]);
 
+  // Calculate additional metrics (must be before early return)
+  const avgGlucose = useMemo(() => {
+    if (!patients.length) return 0;
+    return Math.round(patients.reduce((acc, p) => acc + p.vitals.glucose_mgdl, 0) / patients.length);
+  }, [patients]);
+
+  const patientsWithActivity = useMemo(() => {
+    return patients.filter(p => p.vitals.steps_per_minute > 0).length;
+  }, [patients]);
+
   const dismissAlert = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setDismissedAlerts(prev => new Set(prev).add(id));
@@ -115,12 +125,21 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
 
   return (
     <div className="space-y-6">
-      {/* Header Stats Row - Minimal */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <SummaryCard title="Total Patients" value={stats.totalPatients} icon={Users} color="blue" />
-        <SummaryCard title="Active Alerts" value={stats.activeAlerts} icon={AlertTriangle} color="orange" />
-        <SummaryCard title="Critical Status" value={stats.highRiskPatients} icon={Activity} color="red" />
-        <SummaryCard title="Avg Health Score" value={stats.averageHealthScore} icon={Heart} color={stats.averageHealthScore > 75 ? 'green' : 'orange'} />
+      {/* Header Stats Row - Enhanced */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <SummaryCard title="Total Patients" value={stats.totalPatients} icon={Users} color="blue" subtitle="Active Monitoring" />
+        <SummaryCard title="Active Alerts" value={stats.activeAlerts} icon={AlertTriangle} color="orange" subtitle="Require Attention" />
+        <SummaryCard title="Critical Status" value={stats.highRiskPatients} icon={Activity} color="red" subtitle="High Risk" />
+        <SummaryCard title="Avg Health Score" value={stats.averageHealthScore} icon={Heart} color={stats.averageHealthScore > 75 ? 'green' : 'orange'} subtitle={`Target: >80`} />
+        <SummaryCard title="Avg Glucose" value={`${avgGlucose}`} icon={Droplets} color="teal" subtitle="mg/dL" />
+        <SummaryCard title="Active Patients" value={patientsWithActivity} icon={TrendingUp} color="purple" subtitle="Currently Moving" />
+      </div>
+
+      {/* New: Insights Row - Population Level Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <GlucoseDistribution patients={patients} />
+        <RiskMatrix patients={patients} settings={settings} />
+        <VitalsOverview patients={patients} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
