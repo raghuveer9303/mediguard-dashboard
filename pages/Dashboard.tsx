@@ -16,6 +16,10 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
   const [searchTerm, setSearchTerm] = useState('');
   const [riskFilter, setRiskFilter] = useState<'ALL' | 'LOW' | 'MEDIUM' | 'HIGH'>('ALL');
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
+  
+  // Alert feed filters
+  const [alertRiskTypeFilter, setAlertRiskTypeFilter] = useState<'ALL' | 'hypoglycemia' | 'cardiac' | 'fall' | 'hypotension' | 'autonomic'>('ALL');
+  const [alertScoreThreshold, setAlertScoreThreshold] = useState<number>(100); // Show alerts below this score
 
   // Helper to find the relevant highest risk based on SETTINGS
   const getRelevantHighestRisk = (patient: PatientRecord): [string, PredictionDetail] | null => {
@@ -79,26 +83,59 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
     return { totalPatients, activeAlerts, highRiskPatients, averageHealthScore: avgScore };
   }, [patients, settings]);
 
-  // --- Active Alerts Logic ---
+  // --- Active Alerts Logic (Enhanced with Filtering) ---
   const activeAlerts = useMemo(() => {
     return patients
       .filter(p => {
+        // Filter 1: Must have risk and not be dismissed
         const risk = getRelevantHighestRisk(p);
         const hasRisk = risk && (risk[1].risk_level === 'HIGH' || risk[1].risk_level === 'MEDIUM');
-        return hasRisk && !dismissedAlerts.has(p.prediction_id);
+        if (!hasRisk || dismissedAlerts.has(p.prediction_id)) return false;
+        
+        // Filter 2: Health score threshold
+        const score = p.composite_health_score || 0;
+        if (score > alertScoreThreshold) return false;
+        
+        // Filter 3: Specific risk type filter
+        if (alertRiskTypeFilter !== 'ALL') {
+          return risk && risk[0] === alertRiskTypeFilter;
+        }
+        
+        return true;
       })
       .sort((a, b) => {
+          // PRIMARY SORT: Health Score (ascending - worst first)
+          const scoreA = a.composite_health_score || 0;
+          const scoreB = b.composite_health_score || 0;
+          
+          if (scoreA !== scoreB) {
+            return scoreA - scoreB; // Lower scores first (more critical)
+          }
+          
+          // SECONDARY SORT: Risk Level (HIGH > MEDIUM > LOW)
           const aRisk = getRelevantHighestRisk(a);
           const bRisk = getRelevantHighestRisk(b);
           
-          const aIsHigh = aRisk && aRisk[1].risk_level === 'HIGH';
-          const bIsHigh = bRisk && bRisk[1].risk_level === 'HIGH';
-
-          if (aIsHigh && !bIsHigh) return -1;
-          if (!aIsHigh && bIsHigh) return 1;
-          return (a.composite_health_score || 0) - (b.composite_health_score || 0);
+          const riskLevelValue = (level: string) => {
+            if (level === 'HIGH') return 3;
+            if (level === 'MEDIUM') return 2;
+            if (level === 'LOW') return 1;
+            return 0;
+          };
+          
+          const aLevel = aRisk ? riskLevelValue(aRisk[1].risk_level) : 0;
+          const bLevel = bRisk ? riskLevelValue(bRisk[1].risk_level) : 0;
+          
+          if (aLevel !== bLevel) {
+            return bLevel - aLevel; // Higher risk level first
+          }
+          
+          // TERTIARY SORT: Risk Probability
+          const aProb = aRisk ? aRisk[1].probability : 0;
+          const bProb = bRisk ? bRisk[1].probability : 0;
+          return bProb - aProb; // Higher probability first
       });
-  }, [patients, dismissedAlerts, settings]);
+  }, [patients, dismissedAlerts, settings, alertRiskTypeFilter, alertScoreThreshold]);
 
   // Calculate additional metrics (must be before early return)
   const avgGlucose = useMemo(() => {
@@ -270,18 +307,74 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
         {/* RIGHT COLUMN: Critical Alerts Feed (1/4 width) */}
         <div className="xl:col-span-1 space-y-4">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[calc(100vh-140px)] sticky top-6">
-                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-xl">
-                    <h3 className="font-bold text-slate-800 flex items-center">
-                        <Bell className="w-4 h-4 mr-2 text-slate-500" />
-                        Alert Feed
-                        {activeAlerts.length > 0 && (
-                            <span className="ml-2 bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-bold">
-                                {activeAlerts.length}
-                            </span>
+                {/* Alert Feed Header */}
+                <div className="p-4 border-b border-slate-100 bg-slate-50 rounded-t-xl">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-slate-800 flex items-center">
+                            <Bell className="w-4 h-4 mr-2 text-slate-500" />
+                            Alert Feed
+                            {activeAlerts.length > 0 && (
+                                <span className="ml-2 bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-bold">
+                                    {activeAlerts.length}
+                                </span>
+                            )}
+                        </h3>
+                    </div>
+                    
+                    {/* Filter Controls */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                            <Filter className="w-3 h-3 text-slate-400" />
+                            <select 
+                                className="flex-1 text-xs bg-white border border-slate-200 text-slate-700 rounded-lg focus:ring-blue-500 focus:border-blue-500 p-1.5"
+                                value={alertRiskTypeFilter}
+                                onChange={(e) => setAlertRiskTypeFilter(e.target.value as any)}
+                            >
+                                <option value="ALL">All Risk Types</option>
+                                <option value="cardiac">🫀 Cardiac</option>
+                                <option value="hypoglycemia">🩸 Hypoglycemia</option>
+                                <option value="fall">🤕 Fall Risk</option>
+                                <option value="hypotension">💉 Hypotension</option>
+                                <option value="autonomic">🧠 Autonomic</option>
+                            </select>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                            <Activity className="w-3 h-3 text-slate-400" />
+                            <div className="flex-1">
+                                <input 
+                                    type="range" 
+                                    min="0" 
+                                    max="100" 
+                                    value={alertScoreThreshold}
+                                    onChange={(e) => setAlertScoreThreshold(Number(e.target.value))}
+                                    className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-500"
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                    <span>Score ≤ {alertScoreThreshold}</span>
+                                    <span className={alertScoreThreshold < 50 ? 'text-red-600 font-bold' : ''}>
+                                        {alertScoreThreshold < 50 ? 'Critical' : alertScoreThreshold < 70 ? 'Moderate' : 'All'}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Clear Filters Button */}
+                        {(alertRiskTypeFilter !== 'ALL' || alertScoreThreshold !== 100) && (
+                            <button
+                                onClick={() => {
+                                    setAlertRiskTypeFilter('ALL');
+                                    setAlertScoreThreshold(100);
+                                }}
+                                className="w-full text-xs text-blue-600 hover:text-blue-700 font-medium py-1 hover:bg-blue-50 rounded transition-colors"
+                            >
+                                Clear Filters
+                            </button>
                         )}
-                    </h3>
+                    </div>
                 </div>
                 
+                {/* Alert List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
                     {activeAlerts.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-center p-4">
@@ -299,15 +392,33 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
 
                              const isCritical = highRisk[1].risk_level === 'HIGH';
 
+                             // Determine severity color based on health score
+                             const healthScore = alert.composite_health_score || 0;
+                             let scoreColor = 'text-red-700';
+                             let scoreBgColor = 'bg-red-100';
+                             let cardBgColor = 'bg-red-50 border-red-200';
+                             
+                             if (healthScore >= 70) {
+                               scoreColor = 'text-orange-700';
+                               scoreBgColor = 'bg-orange-100';
+                               cardBgColor = 'bg-orange-50 border-orange-200';
+                             } else if (healthScore >= 50) {
+                               scoreColor = 'text-red-600';
+                               scoreBgColor = 'bg-red-100';
+                               cardBgColor = 'bg-red-50 border-red-200';
+                             } else {
+                               scoreColor = 'text-red-800';
+                               scoreBgColor = 'bg-red-200';
+                               cardBgColor = 'bg-red-100 border-red-300';
+                             }
+
                              return (
                                 <div 
                                     key={alert.prediction_id}
                                     onClick={() => navigate(`/patient/${alert.patient_id}`)}
                                     className={`
                                         group relative p-4 rounded-lg border transition-all cursor-pointer hover:shadow-md
-                                        ${isCritical 
-                                            ? 'bg-red-50 border-red-100 hover:border-red-200' 
-                                            : 'bg-orange-50 border-orange-100 hover:border-orange-200'}
+                                        ${cardBgColor}
                                     `}
                                 >
                                     <button 
@@ -318,17 +429,26 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
                                         <X size={14} />
                                     </button>
 
-                                    <div className="flex items-start justify-between mb-2">
-                                        <span className="font-bold text-slate-800 text-sm">{alert.patient_id}</span>
-                                        <span className="text-[10px] text-slate-500 mt-0.5">
-                                            {new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                        </span>
+                                    <div className="flex items-start justify-between mb-3">
+                                        <div className="flex-1">
+                                            <span className="font-bold text-slate-800 text-sm block">{alert.patient_id}</span>
+                                            <span className="text-[10px] text-slate-500">
+                                                {new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                            </span>
+                                        </div>
+                                        {/* Prominent Health Score Badge */}
+                                        <div className={`${scoreBgColor} ${scoreColor} px-2 py-1 rounded-lg font-black text-lg ml-2`}>
+                                            {healthScore}
+                                        </div>
                                     </div>
                                     
                                     <div className="flex items-center space-x-2 mb-2">
                                         <AlertTriangle className={`w-4 h-4 ${isCritical ? 'text-red-500' : 'text-orange-500'}`} />
                                         <span className={`text-xs font-bold uppercase ${isCritical ? 'text-red-700' : 'text-orange-700'}`}>
                                             {highRisk[0]} Risk
+                                        </span>
+                                        <span className="text-[10px] text-slate-500">
+                                            {(highRisk[1].probability * 100).toFixed(0)}%
                                         </span>
                                     </div>
 
@@ -338,9 +458,12 @@ const Dashboard: React.FC<DashboardProps> = ({ patients, lastUpdated, loading, s
                                             style={{ width: `${highRisk[1].probability * 100}%` }}
                                         />
                                     </div>
-                                    <div className="flex justify-between text-[10px] text-slate-500">
-                                        <span>Prob: {(highRisk[1].probability * 100).toFixed(0)}%</span>
-                                        <span>Score: {alert.composite_health_score}</span>
+                                    
+                                    {/* Quick vitals preview */}
+                                    <div className="flex justify-between text-[10px] text-slate-600 mt-2 pt-2 border-t border-slate-200">
+                                        <span>Glu: {alert.vitals.glucose_mgdl.toFixed(0)}</span>
+                                        <span>HR: {alert.vitals.heart_rate_bpm.toFixed(0)}</span>
+                                        <span>SpO2: {alert.vitals.spo2_pct.toFixed(0)}%</span>
                                     </div>
                                 </div>
                              )
