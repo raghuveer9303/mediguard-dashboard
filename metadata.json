@@ -1,0 +1,5 @@
+{
+  "name": "MediGuard AI Dashboard",
+  "description": "Real-time healthcare prediction dashboard for monitoring patient vitals and risk probabilities.",
+  "requestFramePermissions": []
+}
